@@ -2,6 +2,7 @@ import base64
 import logging
 import os
 
+import urllib3
 import hvac
 
 from audit import audit_log
@@ -9,6 +10,8 @@ from audit import audit_log
 logger = logging.getLogger(__name__)
 
 TRANSIT_KEY = os.getenv("VAULT_TRANSIT_KEY", "claims-pii")
+TRANSIT_KEY_CONVERGENT = os.getenv("VAULT_TRANSIT_KEY_CONVERGENT", "claims-pii-convergent")
+CONVERGENT_CONTEXT = base64.b64encode(b"claims-app").decode()
 DB_ROLE = os.getenv("VAULT_DB_ROLE", "claims-app-role")
 KV_MOUNT = os.getenv("VAULT_KV_MOUNT", "secret")
 
@@ -21,15 +24,21 @@ class VaultClient:
     Auth strategy (checked in order):
       1. VAULT_TOKEN env var  — simplest; use Vault's dev server locally
       2. AWS IAM              — for production on AWS; see _authenticate_iam()
+
+    TLS: set VAULT_SKIP_VERIFY=true to disable certificate verification (useful
+    when Vault uses a self-signed cert in a dev/lab environment).
     """
 
     def __init__(self) -> None:
         self.addr = os.environ["VAULT_ADDR"]
-        self.client = hvac.Client(url=self.addr)
+
+        skip_verify = os.getenv("VAULT_SKIP_VERIFY", "").lower() in ("true", "1", "yes")
+        if skip_verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        self.client = hvac.Client(url=self.addr, verify=not skip_verify)
 
         vault_token = os.getenv("VAULT_TOKEN")
         if vault_token:
-            # Direct token auth — works with `vault server -dev` and any static token.
             self.client.token = vault_token
             audit_log.add("auth/token", "direct", "SUCCESS")
         else:
@@ -95,36 +104,71 @@ class VaultClient:
     # Transit (encrypt-as-a-service)                                       #
     # ------------------------------------------------------------------ #
 
-    def encrypt(self, plaintext: str, field: str | None = None) -> str:
+    def encrypt(self, plaintext: str, field: str | None = None, convergent: bool = False) -> str:
         """
         Encrypt plaintext with the Transit engine. The app never holds the key —
-        only Vault does. The returned ciphertext (vault:vN:...) is safe to store.
+        only Vault does. The returned ciphertext (vault:vN:... or CONV:vault:vN:...)
+        is safe to store in the database.
 
-        Transit requires base64-encoded input.
+        Standard mode: each call produces a unique ciphertext even for identical
+        plaintext (random IV per encryption).
+
+        Convergent mode: same plaintext + same context always produces the same
+        ciphertext. Useful for searchable encryption (compare ciphertexts to find
+        matching records), at the cost of some information leakage. The key must
+        be created with convergent_encryption=true and derived=true.
+
         Vault API: POST /v1/transit/encrypt/{key}
         """
         self._ensure_auth()
         encoded = base64.b64encode(plaintext.encode()).decode()
-        result = self.client.secrets.transit.encrypt_data(
-            name=TRANSIT_KEY,
-            plaintext=encoded,
-        )
-        ciphertext: str = result["data"]["ciphertext"]
-        audit_log.add("transit/encrypt", TRANSIT_KEY, "SUCCESS", extra={"field": field} if field else None)
+
+        if convergent:
+            result = self.client.secrets.transit.encrypt_data(
+                name=TRANSIT_KEY_CONVERGENT,
+                plaintext=encoded,
+                context=CONVERGENT_CONTEXT,
+            )
+            ciphertext = "CONV:" + result["data"]["ciphertext"]
+        else:
+            result = self.client.secrets.transit.encrypt_data(
+                name=TRANSIT_KEY,
+                plaintext=encoded,
+            )
+            ciphertext = result["data"]["ciphertext"]
+
+        extra: dict = {}
+        if field:
+            extra["field"] = field
+        if convergent:
+            extra["convergent"] = True
+        audit_log.add("transit/encrypt", TRANSIT_KEY_CONVERGENT if convergent else TRANSIT_KEY, "SUCCESS", extra=extra or None)
         return ciphertext
 
     def decrypt(self, ciphertext: str, _log: bool = True) -> str:
         """
-        Decrypt a vault:vN:... ciphertext. Vault handles key version routing
-        automatically — old ciphertexts still decrypt even after key rotation.
+        Decrypt a vault:vN:... or CONV:vault:vN:... ciphertext.
+
+        The CONV: prefix indicates the convergent key was used; decrypt routes
+        to the correct key automatically. Vault handles key version routing for
+        rotation — old ciphertexts still decrypt after key rotation.
 
         Vault API: POST /v1/transit/decrypt/{key}
         """
         self._ensure_auth()
-        result = self.client.secrets.transit.decrypt_data(
-            name=TRANSIT_KEY,
-            ciphertext=ciphertext,
-        )
+
+        if ciphertext.startswith("CONV:"):
+            result = self.client.secrets.transit.decrypt_data(
+                name=TRANSIT_KEY_CONVERGENT,
+                ciphertext=ciphertext[5:],
+                context=CONVERGENT_CONTEXT,
+            )
+        else:
+            result = self.client.secrets.transit.decrypt_data(
+                name=TRANSIT_KEY,
+                ciphertext=ciphertext,
+            )
+
         plaintext = base64.b64decode(result["data"]["plaintext"]).decode()
         if _log:
             audit_log.add("transit/decrypt", TRANSIT_KEY, "SUCCESS")

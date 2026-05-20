@@ -29,3 +29,13 @@ export const revokeLeases = () =>
 
 export const deleteClaim = (id: number) =>
   apiFetch<void>(`/api/claims/${id}`, { method: 'DELETE' })
+
+export const getConvergent = () =>
+  apiFetch<{ enabled: boolean }>('/api/vault/convergent')
+
+export const setConvergent = (enabled: boolean) =>
+  apiFetch<{ enabled: boolean }>('/api/vault/convergent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })

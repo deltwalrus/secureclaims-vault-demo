@@ -25,6 +25,18 @@ path "transit/rewrap/claims-pii" {
   capabilities = ["update"]
 }
 
+path "transit/encrypt/claims-pii-convergent" {
+  capabilities = ["update"]
+}
+
+path "transit/decrypt/claims-pii-convergent" {
+  capabilities = ["update"]
+}
+
+path "transit/keys/claims-pii-convergent" {
+  capabilities = ["read"]
+}
+
 path "database/creds/claims-app-role" {
   capabilities = ["read"]
 }

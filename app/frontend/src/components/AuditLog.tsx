@@ -14,6 +14,7 @@ const OP_STYLES: Record<string, { color: string; bg: string }> = {
   'auth/aws/iam':             { color: 'text-vault-400',   bg: 'bg-vault-900/20' },
   'auth/token':               { color: 'text-vault-400',   bg: 'bg-vault-900/20' },
   'secret/data/read':         { color: 'text-sky-400',     bg: 'bg-sky-900/20' },
+  'transit/convergent':       { color: 'text-amber-400',   bg: 'bg-amber-900/20' },
 }
 
 function opStyle(op: string) {
@@ -26,7 +27,11 @@ function opStyle(op: string) {
 function eventDetail(event: AuditEvent): string {
   const { operation, path, extra } = event
   if (operation === 'transit/encrypt') {
-    return extra.field ? `${String(extra.field)} → vault:v*:...` : path
+    const suffix = extra.convergent ? '  ·  convergent' : ''
+    return extra.field ? `${String(extra.field)} → vault:v*:...${suffix}` : path
+  }
+  if (operation === 'transit/convergent') {
+    return extra.enabled ? 'convergent mode enabled' : 'convergent mode disabled'
   }
   if (operation === 'database/creds') {
     const user = extra.username ? `user: ${String(extra.username)}` : path

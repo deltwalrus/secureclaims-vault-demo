@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 vault: VaultClient
+_convergent_mode: bool = False
 
 
 @asynccontextmanager
@@ -56,9 +57,9 @@ async def health():
 
 @app.post("/api/claims", response_model=ClaimResponse)
 async def create_claim(claim: ClaimCreate):
-    encrypted_ssn = vault.encrypt(claim.ssn, field="SSN")
-    encrypted_dob = vault.encrypt(claim.date_of_birth, field="DOB")
-    encrypted_amount = vault.encrypt(str(claim.amount), field="amount")
+    encrypted_ssn = vault.encrypt(claim.ssn, field="SSN", convergent=_convergent_mode)
+    encrypted_dob = vault.encrypt(claim.date_of_birth, field="DOB", convergent=_convergent_mode)
+    encrypted_amount = vault.encrypt(str(claim.amount), field="amount", convergent=_convergent_mode)
 
     async with get_db() as conn:
         row = await conn.fetchrow(
@@ -177,6 +178,24 @@ async def revoke_leases():
     return {"message": "All database leases revoked"}
 
 
+@app.get("/api/vault/convergent")
+async def get_convergent():
+    return {"enabled": _convergent_mode}
+
+
+@app.post("/api/vault/convergent")
+async def set_convergent(body: dict):
+    global _convergent_mode
+    _convergent_mode = bool(body.get("enabled", False))
+    audit_log.add(
+        "transit/convergent",
+        "claims-pii-convergent" if _convergent_mode else "claims-pii",
+        "SUCCESS",
+        extra={"enabled": _convergent_mode},
+    )
+    return {"enabled": _convergent_mode}
+
+
 # ------------------------------------------------------------------ #
 # Audit log SSE stream                                                 #
 # ------------------------------------------------------------------ #
@@ -186,7 +205,6 @@ async def revoke_leases():
 async def audit_stream(request: Request):
     async def generator() -> AsyncGenerator[str, None]:
         sent = 0
-        # Replay buffered events on connect
         snapshot = list(audit_log.events)
         for event in snapshot:
             yield f"data: {json.dumps(event)}\n\n"

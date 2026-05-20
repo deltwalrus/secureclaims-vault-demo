@@ -26,9 +26,14 @@ vault kv put secret/claims-app/db-init \
   username="$DB_ADMIN_USER" \
   password="$DB_ADMIN_PASSWORD"
 
-echo "==> Creating Transit encryption key..."
+echo "==> Creating Transit encryption keys..."
 
 vault write -force transit/keys/claims-pii type=aes256-gcm96 2>/dev/null || echo "  claims-pii key already exists"
+
+vault write -force transit/keys/claims-pii-convergent \
+  type=aes256-gcm96 \
+  convergent_encryption=true \
+  derived=true 2>/dev/null || echo "  claims-pii-convergent key already exists"
 
 echo "==> Configuring database secrets engine..."
 
