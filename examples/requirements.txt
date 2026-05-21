@@ -1,0 +1,2 @@
+hvac>=2.1.0
+# asyncpg>=0.29.0  # uncomment for dynamic_db_creds.py Postgres connection

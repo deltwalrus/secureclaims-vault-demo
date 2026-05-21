@@ -3,6 +3,7 @@
 A working FastAPI + React application that demonstrates how to integrate HashiCorp Vault into a real app. The scenario is an insurance claims processor that handles PII, but the patterns apply to any service that needs to protect sensitive data or manage database credentials.
 
 **What this shows:**
+
 - Encrypting and decrypting sensitive fields (SSN, DOB, amounts) via the Transit engine
 - Obtaining short-lived database credentials on startup instead of storing a password
 - Reading application secrets from KV v2
@@ -78,6 +79,7 @@ admin = vault.read_secret("claims-app/db-init")
 ```
 
 Write the secret once during setup:
+
 ```bash
 vault kv put secret/claims-app/db-init \
   host=mydb.example.com port=5432 database=claims \
@@ -100,9 +102,27 @@ self.client.auth.aws.iam_login(
 
 Set `VAULT_AWS_ROLE` and unset `VAULT_TOKEN` to activate this path.
 
+## Standalone examples
+
+The [`examples/`](examples/) directory has self-contained scripts you can run against any Vault server — copy them into your own project as a starting point.
+
+| Script | What it covers |
+| --- | --- |
+| [`transit_encrypt_decrypt.py`](examples/transit_encrypt_decrypt.py) | Encrypt, decrypt, rotate key, rewrap ciphertext |
+| [`transit_batch.py`](examples/transit_batch.py) | Batch encrypt/decrypt multiple fields in one call |
+| [`transit_convergent.py`](examples/transit_convergent.py) | Deterministic encryption for searchable columns |
+| [`kv_v2_operations.py`](examples/kv_v2_operations.py) | Read/write secrets, version history, soft-delete |
+| [`dynamic_db_creds.py`](examples/dynamic_db_creds.py) | Dynamic Postgres creds, lease renewal, background refresh |
+| [`curl_examples.sh`](examples/curl_examples.sh) | Same patterns via raw HTTP — works from any language |
+
+```bash
+cd examples && pip install -r requirements.txt
+python transit_encrypt_decrypt.py
+```
+
 ## Project structure
 
-```
+```text
 app/
   vault_client.py   # all Vault calls — start here
   database.py       # credential lifecycle management
@@ -146,7 +166,7 @@ uvicorn main:app --reload
 ## Environment variables
 
 | Variable | Required | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `VAULT_ADDR` | yes | — | Vault server URL |
 | `VAULT_TOKEN` | yes* | — | Token auth (local dev) |
 | `VAULT_AWS_ROLE` | yes* | — | IAM auth role name (AWS) |
